@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Water Supply Management</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+    <style>
+        .loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            z-index: 9999;
+        }
+    </style>
+</head>
+<body class="bg-blue-50">
+    <div id="loading" class="loading hidden">
+        <div class="text-center">
+            <i class="bi bi-water text-4xl animate-bounce"></i>
+            <p class="mt-2">Processing...</p>
+        </div>
+    </div>
+
+    <nav class="bg-blue-600 text-white p-4">
+        <div class="container mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-bold"><i class="bi bi-water"></i> Water Supply Manager</h1>
+            <button id="addCustomerBtn" class="bg-white text-blue-600 px-4 py-2 rounded-lg hover:bg-blue-100">
+                <i class="bi bi-person-plus"></i> Add Customer
+            </button>
+        </div>
+    </nav>
+
+    <main class="container mx-auto p-4">
+        <!-- Search Section -->
+        <div class="bg-white p-4 rounded-lg shadow mb-6">
+            <div class="flex flex-wrap gap-4">
+                <input type="text" id="searchInput" placeholder="Search by name or area" 
+                    class="flex-1 p-2 border rounded-lg">
+                <select id="filterArea" class="p-2 border rounded-lg">
+                    <option value="">All Areas</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="mb-6">
+            <div class="flex space-x-2 border-b">
+                <button class="tab-btn active px-4 py-2 text-blue-600 border-b-2 border-blue-600" data-tab="customers">
+                    <i class="bi bi-people"></i> Customers
+                </button>
+                <button class="tab-btn px-4 py-2" data-tab="daily-entry">
+                    <i class="bi bi-calendar"></i> Daily Entry
+                </button>
+                <button class="tab-btn px-4 py-2" data-tab="reports">
+                    <i class="bi bi-file-text"></i> Reports
+                </button>
+            </div>
+        </div>
+
+        <!-- Customer List Tab -->
+        <div id="customers" class="tab-content">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="customerList"></div>
+        </div>
+
+        <!-- Daily Entry Tab -->
+        <div id="daily-entry" class="tab-content hidden">
+            <div class="bg-white p-4 rounded-lg shadow">
+                <h3 class="text-lg font-semibold mb-4">Daily Water Supply Entry</h3>
+                <div class="grid gap-4">
+                    <input type="date" id="entryDate" class="p-2 border rounded-lg">
+                    <div id="dailyEntryList" class="space-y-4"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Reports Tab -->
+        <div id="reports" class="tab-content hidden">
+            <div class="bg-white p-4 rounded-lg shadow">
+                <h3 class="text-lg font-semibold mb-4">Reports</h3>
+                <div class="space-y-4">
+                    <div>
+                        <h4 class="font-medium mb-2">Daily Summary</h4>
+                        <input type="date" id="reportDate" class="p-2 border rounded-lg">
+                        <div id="dailySummary" class="mt-4"></div>
+                    </div>
+                    <div>
+                        <h4 class="font-medium mb-2">Monthly Report</h4>
+                        <input type="month" id="reportMonth" class="p-2 border rounded-lg">
+                        <button id="downloadMonthlyReport" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 ml-2">
+                            <i class="bi bi-download"></i> Download Report
+                        </button>
+                        <div id="monthlyReport" class="mt-4"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Add/Edit Customer Modal -->
+    <div id="customerModal" class="fixed inset-0 bg-black bg-opacity-50 hidden">
+        <div class="bg-white rounded-lg p-6 max-w-md mx-auto mt-20">
+            <h2 class="text-xl font-bold mb-4" id="modalTitle">Add Customer</h2>
+            <form id="customerForm" class="space-y-4">
+                <input type="hidden" id="customerId">
+                <div>
+                    <label>Name</label>
+                    <input type="text" id="customerName" required class="w-full p-2 border rounded-lg">
+                </div>
+                <div>
+                    <label>Area</label>
+                    <input type="text" id="customerArea" required class="w-full p-2 border rounded-lg">
+                </div>
+                <div>
+                    <label>Contact Number</label>
+                    <input type="tel" id="customerContact" required class="w-full p-2 border rounded-lg">
+                </div>
+                <div class="flex justify-end space-x-2">
+                    <button type="button" onclick="closeModal()" class="px-4 py-2 border rounded-lg">Cancel</button>
+                    <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const APP_SLUG = 'water-supply-123';
+        let customers = [];
+        let dailyEntries = [];
+
+        // Show/hide loading spinner
+        const setLoading = (show) => document.getElementById('loading').classList.toggle('hidden', !show);
+
+        // MongoDB Operations
+        async function mongoDBOperation(action, collection, data = null, conditions = null, id = null) {
+            try {
+                const response = await fetch('https://r0c8kgwocscg8gsokogwwsw4.zetaverse.one/mongodb', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer DPSmLDeIYQPcfWZuV8Z5vxz65vp2',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        appSlug: APP_SLUG,
+                        action,
+                        collection,
+                        data,
+                        conditions,
+                        id
+                    })
+                });
+                return await response.json();
+            } catch (error) {
+                console.error('MongoDB operation failed:', error);
+                return null;
+            }
+        }
+
+        // Customer Management
+        async function loadCustomers() {
+            setLoading(true);
+            const result = await mongoDBOperation('read', 'customers');
+            if (result?.success) {
+                customers = result.result.read;
+                renderCustomers();
+                updateAreaFilter();
+            }
+            setLoading(false);
+        }
+
+        function renderCustomers() {
+            const customerList = document.getElementById('customerList');
+            customerList.innerHTML = customers.map(customer => `
+                <div class="bg-white p-4 rounded-lg shadow">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h3 class="font-semibold">${customer.name}</h3>
+                            <p class="text-gray-600"><i class="bi bi-geo-alt"></i> ${customer.area}</p>
+                            <p class="text-gray-600"><i class="bi bi-telephone"></i> ${customer.contact}</p>
+                        </div>
+                        <div class="space-x-2">
+                            <button onclick="editCustomer('${customer._id}')" class="text-blue-600">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <button onclick="deleteCustomer('${customer._id}')" class="text-red-600">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <button onclick="viewBill('${customer._id}')" class="mt-4 w-full bg-blue-100 text-blue-600 px-4 py-2 rounded-lg">
+                        <i class="bi bi-file-text"></i> View Bill
+                    </button>
+                </div>
+            `).join('');
+        }
+
+        // Daily Entry Management
+        async function loadDailyEntries(date) {
+            setLoading(true);
+            const result = await mongoDBOperation('read', 'daily_entries', null, { date });
+            if (result?.success) {
+                dailyEntries = result.result.read;
+                renderDailyEntries();
+            }
+            setLoading(false);
+        }
+
+        function renderDailyEntries() {
+            const dailyEntryList = document.getElementById('dailyEntryList');
+            dailyEntryList.innerHTML = customers.map(customer => {
+                const entry = dailyEntries.find(e => e.customerId === customer._id && e.date === document.getElementById('entryDate').value) || {};
+                return `
+                    <div class="flex items-center justify-between border-b pb-2">
+                        <div>
+                            <p class="font-semibold">${customer.name}</p>
+                            <p class="text-sm text-gray-600">${customer.area}</p>
+                        </div>
+                        <input type="number" 
+                            value="${entry.bottles || 0}" 
+                            min="0"
+                            onchange="updateDailyEntry('${customer._id}', this.value)"
+                            class="w-20 p-2 border rounded-lg">
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function updateDailyEntry(customerId, bottles) {
+            const date = document.getElementById('entryDate').value;
+            if (!date) return;
+
+            setLoading(true);
+            const existingEntry = dailyEntries.find(e => e.customerId === customerId && e.date === date);
+            if (existingEntry) {
+                await mongoDBOperation('update', 'daily_entries', { bottles: parseInt(bottles) }, { _id: existingEntry._id });
+            } else {
+                await mongoDBOperation('create', 'daily_entries', {
+                    customerId,
+                    date,
+                    bottles: parseInt(bottles)
+                });
+            }
+            await loadDailyEntries(date);
+            setLoading(false);
+        }
+
+        // Reports
+        async function generateDailySummary(date) {
+            setLoading(true);
+            const result = await mongoDBOperation('read', 'daily_entries', null, { date });
+            if (result?.success) {
+                const entries = result.result.read;
+                const summary = {};
+                entries.forEach(entry => {
+                    const customer = customers.find(c => c._id === entry.customerId);
+                    if (customer) {
+                        summary[customer.area] = (summary[customer.area] || 0) + entry.bottles;
+                    }
+                });
+
+                document.getElementById('dailySummary').innerHTML = `
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full">
+                            <thead>
+                                <tr class="bg-gray-100">
+                                    <th class="p-2 text-left">Area</th>
+                                    <th class="p-2 text-left">Total Bottles</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${Object.entries(summary).map(([area, bottles]) => `
+                                    <tr class="border-b">
+                                        <td class="p-2">${area}</td>
+                                        <td class="p-2">${bottles}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            }
+            setLoading(false);
+        }
+
+        async function generateMonthlyReport(month) {
+            setLoading(true);
+            const result = await mongoDBOperation('read', 'daily_entries', null, { month });
+            if (result?.success) {
+                const entries = result.result.read;
+                const report = {};
+                entries.forEach(entry => {
+                    const customer = customers.find(c => c._id === entry.customerId);
+                    if (customer) {
+                        if (!report[customer._id]) {
+                            report[customer._id] = {
+                                name: customer.name,
+                                area: customer.area,
+                                totalBottles: 0,
+                                totalAmount: 0
+                            };
+                        }
+                        report[customer._id].totalBottles += entry.bottles;
+                        report[customer._id].totalAmount += entry.bottles * 20; // Assuming ₹20 per bottle
+                    }
+                });
+
+                document.getElementById('monthlyReport').innerHTML = `
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full">
+                            <thead>
+                                <tr class="bg-gray-100">
+                                    <th class="p-2 text-left">Customer</th>
+                                    <th class="p-2 text-left">Area</th>
+                                    <th class="p-2 text-left">Total Bottles</th>
+                                    <th class="p-2 text-left">Amount (₹)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${Object.values(report).map(r => `
+                                    <tr class="border-b">
+                                        <td class="p-2">${r.name}</td>
+                                        <td class="p-2">${r.area}</td>
+                                        <td class="p-2">${r.totalBottles}</td>
+                                        <td class="p-2">₹${r.totalAmount}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            }
+            setLoading(false);
+        }
+
+        // Excel Export
+        function exportToExcel(data, filename) {
+            const ws = XLSX.utils.json_to_sheet(data);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+            XLSX.writeFile(wb, filename);
+        }
+
+        // Event Listeners
+        document.addEventListener('DOMContentLoaded', () => {
+            loadCustomers();
+
+            // Tab switching
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active', 'text-blue-600', 'border-b-2', 'border-blue-600'));
+                    document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+                    e.target.classList.add('active', 'text-blue-600', 'border-b-2', 'border-blue-600');
+                    document.getElementById(e.target.dataset.tab).classList.remove('hidden');
+                });
+            });
+
+            // Date inputs
+            document.getElementById('entryDate').valueAsDate = new Date();
+            document.getElementById('entryDate').addEventListener('change', (e) => loadDailyEntries(e.target.value));
+
+            document.getElementById('reportDate').valueAsDate = new Date();
+            document.getElementById('reportDate').addEventListener('change', (e) => generateDailySummary(e.target.value));
+
+            document.getElementById('reportMonth').value = new Date().toISOString().slice(0, 7);
+            document.getElementById('reportMonth').addEventListener('change', (e) => generateMonthlyReport(e.target.value));
+
+            // Download monthly report
+            document.getElementById('downloadMonthlyReport').addEventListener('click', async () => {
+                const month = document.getElementById('reportMonth').value;
+                const result = await mongoDBOperation('read', 'daily_entries', null, { month });
+                if (result?.success) {
+                    const reportData = result.result.read.map(entry => {
+                        const customer = customers.find(c => c._id === entry.customerId);
+                        return {
+                            Date: entry.date,
+                            Customer: customer?.name || 'Unknown',
+                            Area: customer?.area || 'Unknown',
+                            Bottles: entry.bottles,
+                            Amount: entry.bottles * 20
+                        };
+                    });
+                    exportToExcel(reportData, `WaterSupply_${month}.xlsx`);
+                }
+            });
+        });
+
+        // Modal Functions
+        function showModal() {
+            document.getElementById('customerModal').classList.remove('hidden');
+        }
+
+        function closeModal() {
+            document.getElementById('customerModal').classList.add('hidden');
+            document.getElementById('customerForm').reset();
+            document.getElementById('customerId').value = '';
+        }
+
+        // Initialize the app
+        document.getElementById('addCustomerBtn').addEventListener('click', showModal);
+        document.getElementById('customerForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const customerId = document.getElementById('customerId').value;
+            const customerData = {
+                name: document.getElementById('customerName').value,
+                area: document.getElementById('customerArea').value,
+                contact: document.getElementById('customerContact').value
+            };
+
+            setLoading(true);
+            if (customerId) {
+                await mongoDBOperation('update', 'customers', customerData, { _id: customerId });
+            } else {
+                await mongoDBOperation('create', 'customers', customerData);
+            }
+            await loadCustomers();
+            closeModal();
+            setLoading(false);
+        });
+
+        // Search and Filter
+        document.getElementById('searchInput').addEventListener('input', (e) => {
+            const searchTerm = e.target.value.toLowerCase();
+            const filteredCustomers = customers.filter(customer => 
+                customer.name.toLowerCase().includes(searchTerm) ||
+                customer.area.toLowerCase().includes(searchTerm)
+            );
+            renderCustomers(filteredCustomers);
+        });
+
+        function updateAreaFilter() {
+            const areas = [...new Set(customers.map(c => c.area))];
+            const select = document.getElementById('filterArea');
+            select.innerHTML = '<option value="">All Areas</option>' +
+                areas.map(area => `<option value="${area}">${area}</option>`).join('');
+        }
+
+        document.getElementById('filterArea').addEventListener('change', (e) => {
+            const area = e.target.value;
+            const filteredCustomers = area ? customers.filter(c => c.area === area) : customers;
+            renderCustomers(filteredCustomers);
+        });
+    </script>
+<script>document.body.addEventListener('wheel', e => { if (!e.ctrlKey) return; e.preventDefault(); return }, { passive: false })</script>
+	</body>
+</html>
